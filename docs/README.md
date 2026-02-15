@@ -6,35 +6,24 @@ Strategic documentation for prediction market trading.
 
 | Doc | Purpose |
 |-----|---------|
-| [THESIS.md](THESIS.md) | Core philosophy and strategic principles |
+| [THESIS.md](THESIS.md) | Core philosophy and reasoning edge |
 | [AI_EDGE.md](AI_EDGE.md) | AI domain expertise strategy |
 | [PLAYBOOK.md](PLAYBOOK.md) | Daily operations quick reference |
+| [STRATEGIC_VISION.md](STRATEGIC_VISION.md) | Long-term vision |
+| [DATA_AND_LEARNING_INFRASTRUCTURE.md](DATA_AND_LEARNING_INFRASTRUCTURE.md) | Calibration and learning systems |
 
-## Agents
+## Quick Reference
 
-| Agent | Location | Purpose |
-|-------|----------|---------|
-| Finder | `.claude/agents/finder.md` | Scan for short-term, reasoning-amenable markets |
-| Reasoner | `.claude/agents/reasoner.md` | First-principles analysis |
-
-## Skills
-
-| Skill | Location | Purpose |
-|-------|----------|---------|
-| Triage Markets | `.claude/skills/triage-markets.md` | Full team workflow |
-
-## Tools
-
-| Tool | Command | Purpose |
-|------|---------|---------|
-| Kelly | `python kelly.py --help` | Position sizing + payout calculator |
-| Niche Finder | `python niche_finder.py` | Market scanning |
-| Kalshi Client | `python kalshi_client.py` | API access |
+See the main [CLAUDE.md](../CLAUDE.md) for:
+- Agent descriptions
+- Skill catalog
+- Tool usage
+- Workflow overview
 
 ## Core Principles
 
 1. **Reasoning > Research** - Think deeper, not wider
 2. **Capital Velocity > Large Bets** - Short-term compounds faster
-3. **Domain Expertise** - AI is our edge
+3. **Domain Expertise** - AI reasoning is our edge
 4. **Discipline** - Kelly sizing, time adjustment, hard caps
 5. **Falsifiability** - If you can't say what would change your mind, don't bet
