@@ -14,6 +14,42 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+# =============================================================================
+# Custom Exceptions
+# =============================================================================
+
+class KalshiError(Exception):
+    """Base exception for Kalshi API errors."""
+    pass
+
+
+class KalshiAuthError(KalshiError):
+    """Authentication failed (401/403)."""
+    pass
+
+
+class KalshiRateLimitError(KalshiError):
+    """Rate limit exceeded (429)."""
+    def __init__(self, message: str, retry_after: int = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+class KalshiNotFoundError(KalshiError):
+    """Resource not found (404)."""
+    pass
+
+
+class KalshiNetworkError(KalshiError):
+    """Network/connection error."""
+    pass
+
+
+class KalshiServerError(KalshiError):
+    """Server error (5xx)."""
+    pass
+
+
 @dataclass
 class Market:
     """Represents a Kalshi market (betting contract)"""
@@ -129,8 +165,27 @@ class KalshiClient:
         )
         return base64.b64encode(sig).decode('utf-8')
 
-    def _request(self, method: str, path: str, params: Dict = None, auth: bool = False) -> Dict:
-        """Make API request"""
+    def _request(self, method: str, path: str, params: Dict = None,
+                  auth: bool = False, raise_errors: bool = False) -> Dict:
+        """Make API request.
+
+        Args:
+            method: HTTP method
+            path: API path
+            params: Query params (GET) or body (POST/PUT)
+            auth: Whether to sign the request
+            raise_errors: If True, raise exceptions; if False, return error dict
+
+        Returns:
+            API response dict
+
+        Raises:
+            KalshiAuthError: Authentication failed (401/403)
+            KalshiRateLimitError: Rate limit exceeded (429)
+            KalshiNotFoundError: Resource not found (404)
+            KalshiNetworkError: Network/connection error
+            KalshiServerError: Server error (5xx)
+        """
         headers = {'Accept-Encoding': 'identity'}
 
         if auth and self.private_key:
@@ -152,12 +207,51 @@ class KalshiClient:
             else:
                 r = requests.request(method, url, headers=headers, json=params, timeout=30)
 
+            # Success
             if r.status_code in (200, 201):
                 return r.json()
-            else:
-                return {'error': r.status_code, 'message': r.text[:500]}
-        except Exception as e:
-            return {'error': 'exception', 'message': str(e)}
+
+            # Handle specific error codes
+            error_msg = r.text[:500]
+
+            if r.status_code in (401, 403):
+                if raise_errors:
+                    raise KalshiAuthError(f"Auth failed: {error_msg}")
+                return {'error': 'auth', 'status': r.status_code, 'message': error_msg}
+
+            if r.status_code == 404:
+                if raise_errors:
+                    raise KalshiNotFoundError(f"Not found: {path}")
+                return {'error': 'not_found', 'status': 404, 'message': error_msg}
+
+            if r.status_code == 429:
+                retry_after = int(r.headers.get('Retry-After', 60))
+                if raise_errors:
+                    raise KalshiRateLimitError(f"Rate limited: {error_msg}", retry_after)
+                return {'error': 'rate_limit', 'status': 429, 'message': error_msg, 'retry_after': retry_after}
+
+            if r.status_code >= 500:
+                if raise_errors:
+                    raise KalshiServerError(f"Server error {r.status_code}: {error_msg}")
+                return {'error': 'server', 'status': r.status_code, 'message': error_msg}
+
+            # Other client errors
+            return {'error': 'client', 'status': r.status_code, 'message': error_msg}
+
+        except requests.Timeout as e:
+            if raise_errors:
+                raise KalshiNetworkError(f"Request timed out: {e}") from e
+            return {'error': 'timeout', 'message': str(e)}
+
+        except requests.ConnectionError as e:
+            if raise_errors:
+                raise KalshiNetworkError(f"Connection failed: {e}") from e
+            return {'error': 'connection', 'message': str(e)}
+
+        except requests.RequestException as e:
+            if raise_errors:
+                raise KalshiNetworkError(f"Request failed: {e}") from e
+            return {'error': 'network', 'message': str(e)}
 
     # ==================== EVENTS ====================
 
@@ -306,18 +400,161 @@ class KalshiClient:
         return matches
 
     def search_markets(self, query: str, status: str = 'open', limit: int = 50) -> List[Market]:
-        """Search markets by keyword in title"""
-        query_lower = query.lower()
-        markets = self.get_all_markets(status=status)
-        matches = []
+        """Search markets by keyword in title (fast - stops when limit reached)
 
-        for m in markets:
-            if query_lower in m.title.lower():
-                matches.append(m)
-                if len(matches) >= limit:
-                    break
+        Excludes Sports and Crypto by default. Paginates until limit is found.
+        """
+        query_lower = query.lower()
+        matches = []
+        cursor = None
+
+        # Ticker prefixes to exclude (sports, crypto, parlays)
+        EXCLUDE_PREFIXES = ['KXMV', 'KXNBA', 'KXNFL', 'KXMLB', 'KXNHL', 'KXSOCCER',
+                           'KXTENNIS', 'KXGOLF', 'KXUFC', 'KXMMA', 'KXESPORTS',
+                           'KXNCAA', 'KXCBB', 'KXCFB', 'KXBTC', 'KXETH', 'KXSOL']
+
+        for _ in range(20):  # Max 20 pages (20,000 markets)
+            params = {'limit': 1000, 'status': status}
+            if cursor:
+                params['cursor'] = cursor
+
+            result = self._request('GET', '/markets', params)
+            markets_data = result.get('markets', [])
+
+            for m_data in markets_data:
+                ticker = m_data.get('ticker', '')
+                title = m_data.get('title', '')
+
+                # Skip excluded categories
+                if any(ticker.startswith(p) for p in EXCLUDE_PREFIXES):
+                    continue
+
+                # Check if query matches
+                if query_lower in title.lower():
+                    market = Market.from_api(m_data)
+                    matches.append(market)
+                    if len(matches) >= limit:
+                        return matches
+
+            cursor = result.get('cursor')
+            if not cursor or not markets_data:
+                break
 
         return matches
+
+    def get_good_events(self, limit: int = 100) -> List[Event]:
+        """Get events from reasoning-amenable categories (not Sports/Crypto)"""
+        # Top-level Kalshi categories (excluding Sports, Crypto, Culture)
+        GOOD_CATEGORIES = [
+            'Politics',
+            'Economics',
+            'Financials',
+            'Climate',
+            'Climate and Weather',  # API may use this variant
+            'Tech & Science',
+            'Science and Technology',  # API may use this variant
+            'Companies',
+            'Mentions',
+        ]
+
+        matches = []
+        cursor = None
+
+        for _ in range(20):  # Max 20 pages
+            params = {'limit': 100, 'status': 'open'}
+            if cursor:
+                params['cursor'] = cursor
+
+            result = self._request('GET', '/events', params)
+            events_data = result.get('events', [])
+
+            for e_data in events_data:
+                category = e_data.get('category', '')
+                if category in GOOD_CATEGORIES:
+                    event = Event.from_api(e_data)
+                    matches.append(event)
+                    if len(matches) >= limit:
+                        return matches
+
+            cursor = result.get('cursor')
+            if not cursor or not events_data:
+                break
+
+        return matches
+
+    def get_markets_for_events(self, event_tickers: List[str], min_volume: int = 0) -> List[Market]:
+        """Get markets for specific events"""
+        markets = []
+        for ticker in event_tickers:
+            result = self._request('GET', '/markets', {'event_ticker': ticker, 'status': 'open'})
+            for m_data in result.get('markets', []):
+                if (m_data.get('volume') or 0) >= min_volume:
+                    if m_data.get('yes_bid') or m_data.get('yes_ask'):
+                        markets.append(Market.from_api(m_data))
+        return markets
+
+    def find_opportunities(self, max_days: int = 30, min_volume: int = 100, limit: int = 20) -> List[Market]:
+        """Find short-term reasoning-amenable markets (excludes sports/crypto)
+
+        Checks known good series: Fed rates, CPI, GDP, unemployment, cabinet, etc.
+        Returns markets sorted by volume.
+        """
+        from datetime import datetime, timezone
+
+        # Series known to have reasoning-amenable markets
+        # Organized by category
+        GOOD_SERIES = [
+            # Economics
+            'KXFED', 'KXCPI', 'KXGDP', 'KXJOBS', 'KXUNEMPLOYMENT', 'KXPCE',
+            'KXINFLATION', 'KXRECESSION', 'KXGASRETAIL', 'KXRETAIL',
+            # Politics
+            'KXCABLEAVE', 'KXTRUTHSOCIAL', 'KXELECTIONBILL', 'KXSHUTDOWN',
+            'KXTARIFF', 'KXWARSH', 'KXEXECORDER', 'KXIMPEACH',
+            # Financials
+            'KXSP500', 'KXDOW', 'KXNASDAQ', 'KXVIX', 'KXRATES',
+            # Climate
+            'KXHURRICANE', 'KXTEMP', 'KXWEATHER',
+            # Mentions (e.g., 60 Minutes)
+            'KX60MIN',
+            # Companies
+            'KXEARNINGS', 'KXIPO',
+        ]
+
+        now = datetime.now(timezone.utc)
+        candidates = []
+
+        for series in GOOD_SERIES:
+            try:
+                result = self._request('GET', '/markets', {
+                    'series_ticker': series, 'status': 'open', 'limit': 20
+                })
+                for m_data in result.get('markets', []):
+                    # Check volume
+                    if (m_data.get('volume') or 0) < min_volume:
+                        continue
+
+                    # Must have price
+                    if not m_data.get('yes_bid') and not m_data.get('yes_ask'):
+                        continue
+
+                    # Check time horizon
+                    close_time = m_data.get('close_time')
+                    if close_time:
+                        if isinstance(close_time, str):
+                            ct = datetime.fromisoformat(close_time.replace('Z', '+00:00'))
+                        else:
+                            ct = close_time
+                        days = (ct - now).days
+                        if days < 0 or days > max_days:
+                            continue
+
+                    candidates.append(Market.from_api(m_data))
+            except Exception:
+                continue  # Skip series that error
+
+        # Sort by volume, return top
+        candidates.sort(key=lambda m: m.volume or 0, reverse=True)
+        return candidates[:limit]
 
     # ==================== SERIES ====================
 
@@ -329,6 +566,77 @@ class KalshiClient:
 
         result = self._request('GET', '/series', params)
         return result.get('series', [])
+
+    def discover_series(self, categories: List[str] = None, max_days: int = 30,
+                        min_volume: int = 1000) -> List[Dict]:
+        """
+        Discover series with active short-term, high-volume markets.
+
+        Use this to find new series to add to GOOD_SERIES.
+        Returns series tickers with their best market's stats.
+        """
+        from datetime import datetime, timezone, timedelta
+
+        if categories is None:
+            categories = ['Politics', 'Economics', 'Financials',
+                          'Science and Technology', 'Companies', 'World', 'Health']
+
+        categories_set = set(categories)
+        now = datetime.now(timezone.utc)
+        max_close = now + timedelta(days=max_days)
+
+        # Get series in good categories
+        all_series = []
+        cursor = None
+        for _ in range(10):
+            params = {'limit': 500}
+            if cursor:
+                params['cursor'] = cursor
+            result = self._request('GET', '/series', params)
+            all_series.extend(result.get('series', []))
+            cursor = result.get('cursor')
+            if not cursor:
+                break
+
+        good_series = [s for s in all_series if s.get('category') in categories_set]
+
+        # Sample up to 100 series to find those with active short-term markets
+        discoveries = []
+        import random
+        sample = random.sample(good_series, min(100, len(good_series)))
+
+        for s in sample:
+            try:
+                resp = self._request('GET', '/markets', {
+                    'series_ticker': s['ticker'], 'status': 'open', 'limit': 10
+                })
+                markets = resp.get('markets', [])
+
+                for m in markets:
+                    vol = m.get('volume', 0)
+                    if vol < min_volume:
+                        continue
+                    ct = m.get('close_time')
+                    if not ct:
+                        continue
+                    close = datetime.fromisoformat(ct.replace('Z', '+00:00'))
+                    if close > max_close or close < now:
+                        continue
+
+                    # Found a good one
+                    discoveries.append({
+                        'series': s['ticker'],
+                        'category': s.get('category'),
+                        'sample_market': m['ticker'],
+                        'volume': vol,
+                        'days': (close - now).days
+                    })
+                    break
+            except:
+                continue
+
+        discoveries.sort(key=lambda x: -x['volume'])
+        return discoveries
 
     # ==================== PORTFOLIO (Auth Required) ====================
 
@@ -544,6 +852,118 @@ class KalshiExplorer:
         """Find high-probability markets (favorites)"""
         markets = self.filter_markets(min_price=min_price, min_volume=min_volume)
         return sorted(markets, key=lambda x: x.volume or 0, reverse=True)[:limit]
+
+    # Categories that are reasoning-amenable (exclude Sports, Crypto, Entertainment)
+    GOOD_CATEGORIES = [
+        'Politics', 'Elections', 'Economics', 'Climate and Weather',
+        'Science and Technology', 'Financials', 'Companies', 'World', 'Health'
+    ]
+
+    def find_by_category(self, categories: List[str] = None, max_days: int = 30,
+                         min_volume: int = 0, limit: int = 50) -> List[Market]:
+        """Find markets by event category (much faster than scanning all markets)"""
+        from datetime import datetime, timezone
+
+        if categories is None:
+            categories = self.GOOD_CATEGORIES
+
+        # Get all events (cached)
+        events = self.load_all_events()
+        now = datetime.now(timezone.utc)
+        results = []
+
+        for event in events:
+            # Filter by category
+            if event.category not in categories:
+                continue
+
+            # Get markets for this event
+            markets = self.client.get_markets(event_ticker=event.ticker, status='open')
+
+            for m in markets:
+                # Must have price
+                if not m.yes_bid and not m.yes_ask:
+                    continue
+
+                # Check time horizon
+                if m.close_time:
+                    days = (m.close_time - now).days
+                    if days > max_days or days < 0:
+                        continue
+
+                # Check volume
+                if (m.volume or 0) < min_volume:
+                    continue
+
+                results.append(m)
+
+        # Sort by volume
+        return sorted(results, key=lambda x: x.volume or 0, reverse=True)[:limit]
+
+    def find_reasoning_amenable(self, max_days: int = 30, min_volume: int = 100,
+                                 limit: int = 50, fast: bool = True) -> List[Market]:
+        """Find markets amenable to first-principles reasoning (excludes sports/parlays)
+
+        Args:
+            max_days: Maximum days until resolution
+            min_volume: Minimum volume threshold
+            limit: Max results to return
+            fast: If True, only scan first 500 markets (faster). If False, scan all.
+        """
+        from datetime import datetime, timezone
+
+        # Ticker patterns to EXCLUDE (sports, parlays, crypto prices)
+        EXCLUDE_PATTERNS = [
+            'KXMV',      # Multi-game parlays
+            'KXNBA',     # NBA
+            'KXNFL',     # NFL
+            'KXMLB',     # MLB
+            'KXNHL',     # NHL
+            'KXSOCCER',  # Soccer
+            'KXTENNIS',  # Tennis
+            'KXGOLF',    # Golf
+            'KXUFC',     # UFC
+            'KXMMA',     # MMA
+            'KXESPORTS', # Esports
+            'KXNCAA',    # College sports
+            'KXCBB',     # College basketball
+            'KXCFB',     # College football
+        ]
+
+        # Fast mode: just get first batch. Slow mode: get all.
+        if fast:
+            markets = self.client.get_markets(limit=500, status='open')
+        else:
+            markets = self.load_all_markets()
+
+        now = datetime.now(timezone.utc)
+        results = []
+
+        for m in markets:
+            ticker = m.ticker or ''
+
+            # Skip excluded patterns
+            if any(pattern in ticker.upper() for pattern in EXCLUDE_PATTERNS):
+                continue
+
+            # Must have price data
+            if not m.yes_bid and not m.yes_ask:
+                continue
+
+            # Check time horizon
+            if m.close_time:
+                days_to_close = (m.close_time - now).days
+                if days_to_close > max_days or days_to_close < 0:
+                    continue
+
+            # Check volume
+            if (m.volume or 0) < min_volume:
+                continue
+
+            results.append(m)
+
+        # Sort by volume (most liquid first)
+        return sorted(results, key=lambda x: x.volume or 0, reverse=True)[:limit]
 
     def search(self, query: str, search_type: str = 'all') -> Dict:
         """Unified search across events and markets"""

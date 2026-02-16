@@ -267,19 +267,8 @@ We're building an AI-native prediction market operation that compounds intellige
 | **Market Maker** | Opus | Liquidity, execution, true edge |
 
 **Workflow:**
-```
-Finder → Reasoner → Forecaster → Researcher
-                                      ↓
-                            Devil's Advocate
-                                      ↓
-                               Philosopher
-                                      ↓
-                                   Quant
-                                      ↓
-                               Market Maker
-                                      ↓
-                                 EXECUTE
-```
+Finder runs first to scan candidates. Then spawn the full team to collaborate peer-to-peer (Reasoner isolated; Researcher on-demand). Lead synthesizes.
+
 
 ---
 

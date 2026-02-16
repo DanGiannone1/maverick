@@ -20,6 +20,24 @@ Minimal Python toolset for prediction market operations. Agents handle filtering
 
 Core client for Kalshi API access.
 
+### Error Handling
+
+```python
+from kalshi_client import (
+    KalshiClient, KalshiExplorer, Market, Event,
+    KalshiError, KalshiAuthError, KalshiRateLimitError,
+    KalshiNotFoundError, KalshiNetworkError, KalshiServerError
+)
+
+# Errors are returned as dicts by default
+result = client.get_market("INVALID")
+if 'error' in result:
+    print(result['error'])   # 'not_found', 'auth', 'rate_limit', 'timeout', etc.
+    print(result['message'])
+```
+
+### Basic Usage
+
 ```python
 from kalshi_client import KalshiClient, KalshiExplorer, Market, Event
 
@@ -165,9 +183,65 @@ print(payout['annualized_return'])
 
 ---
 
-## Database: `src/db.py`
+## Database CLI: `db_cli.py`
 
-SQLite persistence for predictions and outcomes.
+Command-line interface for agents to store and query predictions.
+
+### Store Predictions
+
+```bash
+# Basic prediction
+python db_cli.py store --ticker KXFED-26FEB15 --agent reasoner \
+    --probability 0.30 --confidence 0.7 --market-price 0.45 \
+    --category economics
+
+# With reasoning trace
+python db_cli.py store --ticker KXFED-26FEB15 --agent reasoner \
+    --probability 0.30 --confidence 0.7 --market-price 0.45 \
+    --reasoning "Fed unlikely to cut due to..." \
+    --factors "inflation,employment" --unknowns "geopolitics"
+```
+
+### Resolve Predictions
+
+```bash
+python db_cli.py resolve --ticker KXFED-26FEB15 \
+    --prediction-id pred_abc123 --outcome NO
+```
+
+### Query Data
+
+```bash
+# Recent predictions
+python db_cli.py recent --limit 20 --agent reasoner
+
+# Unresolved markets
+python db_cli.py unresolved
+
+# Calibration report
+python db_cli.py calibration --agent reasoner --days 90
+
+# Agent performance
+python db_cli.py agent-stats --agent reasoner
+
+# Category breakdown
+python db_cli.py category-stats --days 30
+
+# Get specific prediction
+python db_cli.py get --prediction-id pred_abc123
+```
+
+### Initialize
+
+```bash
+python db_cli.py init
+```
+
+---
+
+## Database Library: `src/db.py`
+
+Direct Python access for persistence.
 
 ```python
 from src.db import init_db, store_prediction, get_prediction, store_outcome
@@ -257,10 +331,14 @@ python scripts/test_db.py
 maverick/
 ├── kelly.py              # Position sizing (CLI + library)
 ├── kalshi_client.py      # API client (CLI + library)
+├── db_cli.py             # Database CLI for agents
+├── requirements.txt      # Python dependencies
 ├── src/
 │   ├── models.py         # Data models (Prediction, Outcome, etc.)
 │   ├── db.py             # SQLite persistence
 │   └── analytics.py      # Calibration, Brier scores
+├── data/
+│   └── maverick.db       # SQLite database
 └── scripts/
     ├── init_db.py        # Database initialization
     └── test_db.py        # Verification script

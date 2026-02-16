@@ -178,31 +178,11 @@ Kelly% = (edge-adjusted formula in kelly.py)
 
 ## Workflow
 
-```
-1. FINDER scans for candidates
-   - Short duration (< 30 days)
-   - Reasoning-amenable category
-   - Structural constraints present
+1. Finder scans for candidates (must run first).
+2. Spawn the full team to collaborate peer-to-peer (Reasoner isolated; Researcher on-demand).
 
-2. REASONER analyzes each candidate
-   - First principles decomposition
-   - Causal chain mapping
-   - Steel-man both sides
-   - Probability estimate
+The team debates, sizes with Kelly, and executes only when the collaboration converges.
 
-3. DEVIL'S ADVOCATE attacks the analysis
-   - Find logical flaws
-   - Challenge assumptions
-   - Identify what would make us wrong
-
-4. KELLY SIZING calculates position
-   - Edge + confidence + time adjustment
-   - Respects hard caps
-
-5. EXECUTE (or pass)
-   - Only if criteria met
-   - Document reasoning for later review
-```
 
 ---
 

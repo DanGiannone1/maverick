@@ -19,8 +19,11 @@ python kelly.py --bet 1000 --market-prob 0.55 --direction NO --days 14
 ```
 
 ### Market Scanner
-```bash
-python niche_finder.py
+```python
+from kalshi_client import KalshiClient, KalshiExplorer
+client = KalshiClient(demo=True)
+explorer = KalshiExplorer(demo=True)
+candidates = explorer.find_close_calls(price_range=(0.4, 0.6))
 ```
 
 ---
@@ -169,17 +172,28 @@ If a bet loses:
 ## Agent Workflow
 
 ```
-/triage-markets
+/operate
 ```
 
-Spawns:
-1. **Finder** (haiku) - scans for candidates
-2. **Reasoner** (opus) - deep analysis
-3. **Devil's Advocate** (opus) - attacks the analysis
-4. **Lead** - synthesizes and recommends
+Runs the operating model with a simple core flow:
+
+1. Finder runs first to scan candidates.
+2. Spawn the full team to collaborate peer-to-peer.
+
+Team roster for the collaboration phase:
+- Reasoner (first-principles analysis in isolation)
+- Forecaster (base rates, reference classes)
+- Researcher (targeted fact-finding on-demand)
+- Devil's Advocate (attacks the thesis)
+- Philosopher (questions the framing)
+- Quant (Kelly sizing, risk limits)
+- Market Maker (liquidity, true edge)
+- Lead (synthesizes and recommends)
+
+**Critical**: Reasoner is ISOLATED. No news, no sentiment. First principles only. This is the edge.
 
 Or manually:
-1. Find market yourself
-2. Use reasoner.md framework
-3. Run kelly.py for sizing
-4. Execute
+1. Run Finder scan.
+2. Collaborate with the team on analysis (Reasoner isolated; Researcher on-demand).
+3. Run kelly.py for sizing.
+4. Execute.
